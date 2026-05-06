@@ -1,7 +1,8 @@
 /**
  * YouTube Block — content script
  *
- * Runs on Google Docs, Sheets, and Slides.
+ * Runs on Google Docs, Sheets, and Slides. Operates silently — no on-screen
+ * notices are shown to students.
  *
  * Behavior:
  *   - Slides: leaves Insert > Video menu visible. When the dialog opens, hides
@@ -12,7 +13,7 @@
  *   - Slides: leaves teacher-embedded YouTube iframes inside the slide canvas
  *     alone so YouTube Education / approved-content videos still play. Only
  *     YouTube iframes inside link-preview popups are removed.
- *   - youtubeeducation.com is always allowed.
+ *   - youtubeeducation.com is allowed in Slides (left untouched).
  */
 
 (function () {
@@ -29,50 +30,11 @@
   if (!APP) return;
 
   const YOUTUBE_PATTERN =
-    /https?:\/\/([\w-]+\.)*(youtube\.com|youtube-nocookie\.com|youtu\.be|ytimg\.com)\b/i;
-  const YOUTUBE_EDU_PATTERN = /youtubeeducation\.com/i;
+    /https?:\/\/([\w-]+\.)*(youtube\.com|youtube-nocookie\.com|youtu\.be|ytimg\.com|youtubeeducation\.com)\b/i;
 
-  function isBlockedYouTubeUrl(url) {
+  function isYouTubeUrl(url) {
     if (!url) return false;
-    if (YOUTUBE_EDU_PATTERN.test(url)) return false;
     return YOUTUBE_PATTERN.test(url);
-  }
-
-  // ── On-screen notice ────────────────────────────────────────────────────────
-
-  let noticeTimeout = null;
-  function showBlockedNotice(message) {
-    const text =
-      message ||
-      "YouTube videos are blocked by your school. Drive uploads are still allowed.";
-    const existing = document.getElementById("ysb-notice");
-    if (existing) {
-      existing.textContent = text;
-      clearTimeout(noticeTimeout);
-      noticeTimeout = setTimeout(() => existing.remove(), 4000);
-      return;
-    }
-    const notice = document.createElement("div");
-    notice.id = "ysb-notice";
-    notice.textContent = text;
-    Object.assign(notice.style, {
-      position: "fixed",
-      top: "16px",
-      left: "50%",
-      transform: "translateX(-50%)",
-      background: "#c0392b",
-      color: "#fff",
-      padding: "10px 20px",
-      borderRadius: "6px",
-      fontFamily: "Roboto, Arial, sans-serif",
-      fontSize: "14px",
-      zIndex: "2147483647",
-      boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
-      pointerEvents: "none",
-    });
-    document.body.appendChild(notice);
-    clearTimeout(noticeTimeout);
-    noticeTimeout = setTimeout(() => notice.remove(), 4000);
   }
 
   // ── Slides: neuter Insert Video dialog ──────────────────────────────────────
@@ -102,7 +64,6 @@
 
       let hidActiveTab = false;
       let driveTab = null;
-      const blockedTabs = [];
 
       tabs.forEach((tab) => {
         const label = (
@@ -114,7 +75,6 @@
           tab.style.setProperty("display", "none", "important");
           tab.setAttribute("aria-hidden", "true");
           tab.setAttribute("tabindex", "-1");
-          blockedTabs.push(tab);
           if (tab.getAttribute("aria-selected") === "true") {
             hidActiveTab = true;
           }
@@ -123,19 +83,12 @@
         }
       });
 
-      if (blockedTabs.length && !dialog.dataset.ysbAnnounced) {
-        dialog.dataset.ysbAnnounced = "1";
-        showBlockedNotice(
-          "YouTube search and URL embedding are blocked. Use Google Drive to insert an uploaded video."
-        );
-      }
-
       if (hidActiveTab && driveTab) {
         // Defer the click so Google's tab manager finishes its own handlers.
         setTimeout(() => driveTab.click(), 0);
       }
 
-      // Defense in depth: if a YouTube tabpanel is somehow visible, replace it.
+      // Defense in depth: if a YouTube tabpanel is somehow visible, blank it.
       const panels = dialog.querySelectorAll('[role="tabpanel"]');
       panels.forEach((panel) => {
         if (panel.dataset.ysbReplaced) return;
@@ -151,18 +104,6 @@
         ) {
           panel.dataset.ysbReplaced = "1";
           panel.innerHTML = "";
-          const msg = document.createElement("div");
-          msg.textContent =
-            "YouTube video search and URL embedding are blocked by your school. Please use the Google Drive tab to insert an uploaded video.";
-          Object.assign(msg.style, {
-            padding: "48px 24px",
-            textAlign: "center",
-            color: "#444",
-            fontFamily: "Roboto, Arial, sans-serif",
-            fontSize: "14px",
-            lineHeight: "1.5",
-          });
-          panel.appendChild(msg);
         }
       });
     });
@@ -178,18 +119,15 @@
 
   function handleIframe(iframe) {
     const src = iframe.src || iframe.getAttribute("src") || "";
-    if (!isBlockedYouTubeUrl(src)) return;
+    if (!isYouTubeUrl(src)) return;
 
     if (APP === "slides") {
+      // In Slides, only strip iframes inside popup overlays (link previews).
+      // Iframes in the slide canvas may be teacher-embedded Education videos.
       const inPopup = iframe.closest(POPUP_ANCESTOR_SELECTOR);
-      if (inPopup) {
-        iframe.remove();
-        showBlockedNotice();
-      }
-      // else: teacher-embedded video in the slide canvas — leave alone.
+      if (inPopup) iframe.remove();
     } else {
       iframe.remove();
-      showBlockedNotice();
     }
   }
 
@@ -204,9 +142,6 @@
   }
 
   // ── Docs/Sheets: strip preview cards that point at YouTube ──────────────────
-  // The expand-preview card may render before its iframe. Detect link previews
-  // whose target URL is YouTube and remove them so the user only sees the
-  // plain-text link in the document.
 
   function scanLinkPreviewCards(scope) {
     if (APP === "slides") return;
@@ -217,14 +152,13 @@
       if (card.dataset.ysbChecked === "1") return;
       const links = card.querySelectorAll("a[href]");
       const hasYouTubeLink = Array.from(links).some((a) =>
-        isBlockedYouTubeUrl(a.href)
+        isYouTubeUrl(a.href)
       );
       const hasYouTubeIframe = !!card.querySelector(
-        'iframe[src*="youtube.com"], iframe[src*="youtu.be"], iframe[src*="youtube-nocookie.com"], iframe[src*="ytimg.com"]'
+        'iframe[src*="youtube.com"], iframe[src*="youtu.be"], iframe[src*="youtube-nocookie.com"], iframe[src*="ytimg.com"], iframe[src*="youtubeeducation.com"]'
       );
       if (hasYouTubeLink || hasYouTubeIframe) {
         card.remove();
-        showBlockedNotice();
       } else {
         card.dataset.ysbChecked = "1";
       }
@@ -242,7 +176,6 @@
     scanLinkPreviewCards(node);
   }
 
-  // Initial pass over what's already in the DOM
   processNode(document.documentElement);
 
   const observer = new MutationObserver((mutations) => {
@@ -254,7 +187,6 @@
         mutation.target instanceof Element
       ) {
         const t = mutation.target;
-        // Re-process when src/href change (iframe lazy-load) or a tabpanel becomes visible
         if (
           mutation.attributeName === "src" ||
           mutation.attributeName === "href"
