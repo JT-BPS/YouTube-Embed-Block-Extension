@@ -1,8 +1,8 @@
 /**
  * YouTube Block — content script
  *
- * Runs on Google Docs, Sheets, and Slides. Operates silently — no on-screen
- * notices are shown to students.
+ * Runs on Google Docs/Sheets/Slides and on YouTube itself. Operates silently —
+ * no on-screen notices are shown to students.
  *
  * Behavior:
  *   - Slides: leaves Insert > Video menu visible. When the dialog opens, hides
@@ -13,17 +13,30 @@
  *   - Slides: leaves teacher-embedded YouTube iframes inside the slide canvas
  *     alone so YouTube Education / approved-content videos still play. Only
  *     YouTube iframes inside link-preview popups are removed.
- *   - youtubeeducation.com is allowed in Slides (left untouched).
+ *   - YouTube pages: hides the Share button, "Share" menu items, and removes
+ *     the share dialog if it opens. This prevents students from using the
+ *     Share > Embed preview to watch unrestricted video.
  */
 
 (function () {
   "use strict";
 
+  const HOST = location.hostname;
   const APP = (() => {
-    const path = location.pathname;
-    if (path.startsWith("/presentation")) return "slides";
-    if (path.startsWith("/document")) return "docs";
-    if (path.startsWith("/spreadsheets")) return "sheets";
+    if (HOST === "docs.google.com") {
+      const path = location.pathname;
+      if (path.startsWith("/presentation")) return "slides";
+      if (path.startsWith("/document")) return "docs";
+      if (path.startsWith("/spreadsheets")) return "sheets";
+    }
+    if (
+      HOST === "youtube.com" ||
+      HOST.endsWith(".youtube.com") ||
+      HOST === "youtube-nocookie.com" ||
+      HOST.endsWith(".youtube-nocookie.com")
+    ) {
+      return "youtube";
+    }
     return null;
   })();
 
@@ -38,8 +51,6 @@
   }
 
   // ── Slides: neuter Insert Video dialog ──────────────────────────────────────
-  // The dialog has tabs: "Search", "By URL", "Google Drive". Hide the first two
-  // and auto-select Google Drive if the user lands on a hidden tab.
 
   const TAB_BLOCKLIST = /^\s*(search|by url)\s*$/i;
   const TAB_DRIVE = /google drive/i;
@@ -84,11 +95,9 @@
       });
 
       if (hidActiveTab && driveTab) {
-        // Defer the click so Google's tab manager finishes its own handlers.
         setTimeout(() => driveTab.click(), 0);
       }
 
-      // Defense in depth: if a YouTube tabpanel is somehow visible, blank it.
       const panels = dialog.querySelectorAll('[role="tabpanel"]');
       panels.forEach((panel) => {
         if (panel.dataset.ysbReplaced) return;
@@ -109,21 +118,16 @@
     });
   }
 
-  // ── Iframe handling ─────────────────────────────────────────────────────────
-  // Slides:    only remove YouTube iframes inside popups (link previews).
-  //            Leave iframes inside the slide canvas alone (teacher embeds).
-  // Docs/Sheets: remove all YouTube iframes (smart-chip previews).
+  // ── Docs/Sheets/Slides: iframe handling ─────────────────────────────────────
 
   const POPUP_ANCESTOR_SELECTOR =
     '[role="dialog"], [role="tooltip"], .docs-linkbubble-bubble, .docs-bubble, .docs-explore-card, [class*="link-preview"], [class*="linkPreview"], [class*="smart-chip"], [class*="smartChip"]';
 
-  function handleIframe(iframe) {
+  function handleDocsIframe(iframe) {
     const src = iframe.src || iframe.getAttribute("src") || "";
     if (!isYouTubeUrl(src)) return;
 
     if (APP === "slides") {
-      // In Slides, only strip iframes inside popup overlays (link previews).
-      // Iframes in the slide canvas may be teacher-embedded Education videos.
       const inPopup = iframe.closest(POPUP_ANCESTOR_SELECTOR);
       if (inPopup) iframe.remove();
     } else {
@@ -131,17 +135,15 @@
     }
   }
 
-  function scanIframes(scope) {
+  function scanDocsIframes(scope) {
     if (scope.tagName === "IFRAME") {
-      handleIframe(scope);
+      handleDocsIframe(scope);
       return;
     }
     if (scope.querySelectorAll) {
-      scope.querySelectorAll("iframe").forEach(handleIframe);
+      scope.querySelectorAll("iframe").forEach(handleDocsIframe);
     }
   }
-
-  // ── Docs/Sheets: strip preview cards that point at YouTube ──────────────────
 
   function scanLinkPreviewCards(scope) {
     if (APP === "slides") return;
@@ -165,15 +167,113 @@
     });
   }
 
+  // ── YouTube: hide Share button, menu items, and dialog ──────────────────────
+
+  const SHARE_TEXT_PATTERN = /^\s*share\s*$/i;
+  const SHARE_LABEL_PATTERN = /^\s*share(\b|$)/i;
+
+  // CSS-based hiding for stable selectors (faster than mutation scanning).
+  // Injected once per frame.
+  function injectYouTubeShareCss() {
+    if (document.getElementById("ysb-yt-style")) return;
+    const style = document.createElement("style");
+    style.id = "ysb-yt-style";
+    style.textContent = `
+      /* Hide standalone Share buttons (watch page, video cards) */
+      ytd-button-renderer[button-renderer][is-icon-button]:has(yt-icon[icon-name="share"]),
+      yt-button-shape:has([d^="M15 5.63"]),
+      button[aria-label="Share" i],
+      [aria-label="Share" i],
+      a[aria-label="Share" i] {
+        display: none !important;
+      }
+      /* Hide Share entries in dropdown menus */
+      ytd-menu-service-item-renderer:has(yt-formatted-string:where(.ytd-menu-service-item-renderer)),
+      tp-yt-paper-item:has(yt-formatted-string) {
+        /* matched in JS by text below */
+      }
+      /* Catch the share dialog wholesale */
+      ytd-unified-share-panel-renderer,
+      ytd-share-dialog-renderer,
+      yt-share-target-section-renderer {
+        display: none !important;
+      }
+    `;
+    document.documentElement.appendChild(style);
+  }
+
+  function hideYouTubeShareControls(scope) {
+    if (!scope.querySelectorAll) return;
+
+    // Buttons / icon buttons with Share aria-label.
+    scope.querySelectorAll("[aria-label]").forEach((el) => {
+      const label = (el.getAttribute("aria-label") || "").trim();
+      if (SHARE_LABEL_PATTERN.test(label)) {
+        el.style.setProperty("display", "none", "important");
+      }
+    });
+
+    // Menu items where the visible text is exactly "Share".
+    scope
+      .querySelectorAll(
+        '[role="menuitem"], ytd-menu-service-item-renderer, tp-yt-paper-item, ytd-menu-navigation-item-renderer'
+      )
+      .forEach((el) => {
+        const text = (el.textContent || "").trim();
+        if (SHARE_TEXT_PATTERN.test(text)) {
+          el.style.setProperty("display", "none", "important");
+        }
+      });
+
+    // Remove any open share dialog.
+    scope
+      .querySelectorAll(
+        'tp-yt-paper-dialog, ytd-popup-container [role="dialog"], ytd-unified-share-panel-renderer, ytd-share-dialog-renderer, [role="dialog"]'
+      )
+      .forEach((dialog) => {
+        const heading = (
+          dialog.getAttribute("aria-label") ||
+          dialog.querySelector(
+            'h1, h2, h3, [role="heading"], yt-formatted-string#title, [slot="title"]'
+          )?.textContent ||
+          ""
+        ).trim();
+        if (/^share/i.test(heading) || dialog.matches(
+          "ytd-unified-share-panel-renderer, ytd-share-dialog-renderer"
+        )) {
+          dialog.remove();
+        }
+      });
+
+    // Belt-and-suspenders: any /embed/ iframe that ends up in a dialog/popup
+    // gets removed. The static rule should already prevent it from loading.
+    scope.querySelectorAll("iframe").forEach((iframe) => {
+      const src = iframe.src || iframe.getAttribute("src") || "";
+      if (!/youtube(-nocookie)?\.com\/embed\//.test(src)) return;
+      const inDialog = iframe.closest(
+        'tp-yt-paper-dialog, [role="dialog"], ytd-popup-container, ytd-unified-share-panel-renderer'
+      );
+      if (inDialog) iframe.remove();
+    });
+  }
+
   // ── Mutation processing ─────────────────────────────────────────────────────
 
   function processNode(node) {
     if (!node || node.nodeType !== Node.ELEMENT_NODE) return;
     if (APP === "slides") {
       neuterSlidesVideoDialog(node);
+      scanDocsIframes(node);
+    } else if (APP === "docs" || APP === "sheets") {
+      scanDocsIframes(node);
+      scanLinkPreviewCards(node);
+    } else if (APP === "youtube") {
+      hideYouTubeShareControls(node);
     }
-    scanIframes(node);
-    scanLinkPreviewCards(node);
+  }
+
+  if (APP === "youtube") {
+    injectYouTubeShareCss();
   }
 
   processNode(document.documentElement);
@@ -196,9 +296,16 @@
           mutation.attributeName === "aria-selected" ||
           mutation.attributeName === "aria-hidden"
         ) {
-          const dialog = t.closest('[role="dialog"]');
-          if (dialog && APP === "slides") {
-            neuterSlidesVideoDialog(dialog);
+          if (APP === "slides") {
+            const dialog = t.closest('[role="dialog"]');
+            if (dialog) neuterSlidesVideoDialog(dialog);
+          }
+        } else if (mutation.attributeName === "aria-label") {
+          if (APP === "youtube") {
+            const label = (t.getAttribute("aria-label") || "").trim();
+            if (SHARE_LABEL_PATTERN.test(label)) {
+              t.style.setProperty("display", "none", "important");
+            }
           }
         }
       }
@@ -209,6 +316,12 @@
     childList: true,
     subtree: true,
     attributes: true,
-    attributeFilter: ["src", "href", "aria-selected", "aria-hidden"],
+    attributeFilter: [
+      "src",
+      "href",
+      "aria-selected",
+      "aria-hidden",
+      "aria-label",
+    ],
   });
 })();

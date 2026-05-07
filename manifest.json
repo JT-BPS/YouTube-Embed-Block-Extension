@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "YouTube Slides Block",
   "description": "Blocks YouTube search, URL embedding, and link previews in Google Docs, Sheets, and Slides while preserving YouTube Education and Drive uploads.",
-  "version": "1.3.0",
+  "version": "1.4.0",
 
   "update_url": "https://jt-bps.github.io/YouTube-Embed-Block-Extension/update.xml",
 
@@ -15,7 +15,9 @@
   },
 
   "host_permissions": [
-    "https://docs.google.com/*"
+    "https://docs.google.com/*",
+    "https://*.youtube.com/*",
+    "https://*.youtube-nocookie.com/*"
   ],
 
   "declarative_net_request": {
@@ -33,7 +35,9 @@
       "matches": [
         "https://docs.google.com/presentation/*",
         "https://docs.google.com/document/*",
-        "https://docs.google.com/spreadsheets/*"
+        "https://docs.google.com/spreadsheets/*",
+        "https://*.youtube.com/*",
+        "https://*.youtube-nocookie.com/*"
       ],
       "js": ["content.js"],
       "run_at": "document_idle",

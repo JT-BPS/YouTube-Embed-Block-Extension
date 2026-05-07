@@ -8,5 +8,25 @@
       "resourceTypes": ["xmlhttprequest", "script", "sub_frame"],
       "initiatorDomains": ["docs.google.com"]
     }
+  },
+  {
+    "id": 2,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||youtube.com/embed/",
+      "resourceTypes": ["sub_frame", "media"],
+      "initiatorDomains": ["youtube.com"]
+    }
+  },
+  {
+    "id": 3,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||youtube-nocookie.com/embed/",
+      "resourceTypes": ["sub_frame", "media"],
+      "initiatorDomains": ["youtube.com", "youtube-nocookie.com"]
+    }
   }
 ]

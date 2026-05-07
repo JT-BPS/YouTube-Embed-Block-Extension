@@ -3,6 +3,6 @@
   <app appid='pflkdfmgdphcbhpecoijckhbjfhbhhjo'>
     <updatecheck
       codebase='https://jt-bps.github.io/YouTube-Embed-Block-Extension/youtube-slides-block.crx'
-      version='1.3.0' />
+      version='1.4.0' />
   </app>
 </gupdate>
