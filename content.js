@@ -174,32 +174,60 @@
 
   // CSS-based hiding for stable selectors (faster than mutation scanning).
   // Injected once per frame.
-  function injectYouTubeShareCss() {
+  function injectYouTubeCss() {
     if (document.getElementById("ysb-yt-style")) return;
     const style = document.createElement("style");
     style.id = "ysb-yt-style";
     style.textContent = `
-      /* Hide standalone Share buttons (watch page, video cards) */
-      ytd-button-renderer[button-renderer][is-icon-button]:has(yt-icon[icon-name="share"]),
-      yt-button-shape:has([d^="M15 5.63"]),
+      /* ── Share controls ─────────────────────────────────────────────── */
       button[aria-label="Share" i],
       [aria-label="Share" i],
-      a[aria-label="Share" i] {
-        display: none !important;
-      }
-      /* Hide Share entries in dropdown menus */
-      ytd-menu-service-item-renderer:has(yt-formatted-string:where(.ytd-menu-service-item-renderer)),
-      tp-yt-paper-item:has(yt-formatted-string) {
-        /* matched in JS by text below */
-      }
-      /* Catch the share dialog wholesale */
+      a[aria-label="Share" i],
       ytd-unified-share-panel-renderer,
       ytd-share-dialog-renderer,
       yt-share-target-section-renderer {
         display: none !important;
       }
+
+      /* ── Video thumbnails (kills hover preview) ─────────────────────── */
+      ytd-thumbnail,
+      ytd-moving-thumbnail-renderer,
+      yt-thumbnail-view-model,
+      yt-collection-thumbnail-view-model,
+      yt-lockup-view-model img,
+      ytd-playlist-thumbnail,
+      ytd-rich-grid-media #thumbnail,
+      ytd-video-renderer #thumbnail,
+      ytd-compact-video-renderer #thumbnail,
+      ytd-grid-video-renderer #thumbnail,
+      ytd-reel-thumbnail-renderer,
+      ytd-channel-video-player-renderer,
+      ytd-video-preview {
+        visibility: hidden !important;
+      }
+
+      /* ── YouTube Shorts (everything) ────────────────────────────────── */
+      ytd-rich-section-renderer:has(ytd-rich-shelf-renderer[is-shorts]),
+      ytd-rich-shelf-renderer[is-shorts],
+      ytd-reel-shelf-renderer,
+      ytd-reel-item-renderer,
+      ytd-shorts,
+      ytd-mini-guide-entry-renderer[aria-label="Shorts" i],
+      ytd-guide-entry-renderer:has(a[title="Shorts" i]),
+      a[href^="/shorts/"],
+      a[href*="/shorts/"] {
+        display: none !important;
+      }
     `;
     document.documentElement.appendChild(style);
+  }
+
+  // Redirect away from /shorts/<id> URLs so the network-blocked Shorts page
+  // doesn't sit there in a perpetual buffering state.
+  function maybeRedirectShorts() {
+    if (location.pathname.startsWith("/shorts/")) {
+      location.replace("/");
+    }
   }
 
   function hideYouTubeShareControls(scope) {
@@ -273,7 +301,11 @@
   }
 
   if (APP === "youtube") {
-    injectYouTubeShareCss();
+    injectYouTubeCss();
+    maybeRedirectShorts();
+    // YouTube uses SPA navigation; this event fires after each route change.
+    window.addEventListener("yt-navigate-finish", maybeRedirectShorts);
+    window.addEventListener("popstate", maybeRedirectShorts);
   }
 
   processNode(document.documentElement);

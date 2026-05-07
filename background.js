@@ -1,64 +1,101 @@
 /**
  * YouTube Block — background service worker
  *
- * Adds tab-scoped declarativeNetRequest session rules that block YouTube
- * embed sub-frames in Google Docs and Google Sheets tabs. Slides tabs
- * are deliberately untouched so teacher-inserted YouTube Education /
- * approved-content videos still play.
+ * Adds tab-scoped declarativeNetRequest session rules:
  *
- * youtubeeducation.com is not in the blocked domain list, so it always
- * loads fine.
+ *   - Docs / Sheets tabs: block YouTube embed sub-frames (smart chip preview).
+ *     Slides tabs are deliberately untouched so teacher Education embeds work.
+ *
+ *   - YouTube top-level tabs: block requests to googlevideo.com (video data).
+ *     This kills hover previews on search results, Shorts playback, and the
+ *     watch-page player. Tabs whose top-level URL is docs.google.com — even
+ *     when they contain a youtube.com iframe — are not affected, so teacher
+ *     Education embeds in Slides continue to play.
+ *
+ * youtubeeducation.com is allowed in Slides (no rule applies there).
  */
 
-const RULE_BASE = 100000;
-const RULES_PER_TAB = 1;
+const DOCS_RULE_BASE = 100000;
+const YT_RULE_BASE = 200000;
 
 function ruleIdsForTab(tabId) {
-  return [RULE_BASE + tabId];
+  return [DOCS_RULE_BASE + tabId, YT_RULE_BASE + tabId];
 }
 
-function rulesForTab(tabId) {
-  return [
-    {
-      id: RULE_BASE + tabId,
-      priority: 1,
-      action: { type: "block" },
-      condition: {
-        // youtubeeducation.com is included here because the smart-chip
-        // preview in Docs/Sheets routes through it for Workspace Education
-        // accounts. Slides tabs never get this rule, so teacher-embedded
-        // Education videos still load there.
-        requestDomains: [
-          "youtube.com",
-          "youtube-nocookie.com",
-          "youtu.be",
-          "youtubeeducation.com",
-        ],
-        resourceTypes: ["sub_frame", "media"],
-        tabIds: [tabId],
-      },
-    },
-  ];
-}
-
-function shouldBlockUrl(url) {
-  if (!url) return false;
+function classifyTab(url) {
+  if (!url) return null;
   let u;
   try {
     u = new URL(url);
   } catch {
-    return false;
+    return null;
   }
-  if (u.hostname !== "docs.google.com") return false;
-  return (
-    u.pathname.startsWith("/document/") ||
-    u.pathname.startsWith("/spreadsheets/")
-  );
+  if (u.hostname === "docs.google.com") {
+    if (
+      u.pathname.startsWith("/document/") ||
+      u.pathname.startsWith("/spreadsheets/")
+    ) {
+      return "docs-or-sheets";
+    }
+    return null;
+  }
+  if (
+    u.hostname === "youtube.com" ||
+    u.hostname.endsWith(".youtube.com") ||
+    u.hostname === "youtube-nocookie.com" ||
+    u.hostname.endsWith(".youtube-nocookie.com")
+  ) {
+    return "youtube";
+  }
+  return null;
+}
+
+function rulesForTab(tabId, url) {
+  const kind = classifyTab(url);
+  if (kind === "docs-or-sheets") {
+    return [
+      {
+        id: DOCS_RULE_BASE + tabId,
+        priority: 1,
+        action: { type: "block" },
+        condition: {
+          // youtubeeducation.com included because Workspace Education routes
+          // smart-chip preview content through it. Slides never gets this rule.
+          requestDomains: [
+            "youtube.com",
+            "youtube-nocookie.com",
+            "youtu.be",
+            "youtubeeducation.com",
+          ],
+          resourceTypes: ["sub_frame", "media"],
+          tabIds: [tabId],
+        },
+      },
+    ];
+  }
+  if (kind === "youtube") {
+    return [
+      {
+        id: YT_RULE_BASE + tabId,
+        priority: 1,
+        action: { type: "block" },
+        condition: {
+          // googlevideo.com is the CDN for all YouTube video/audio segments.
+          // Blocking it stops hover previews, Shorts, watch-page playback,
+          // and the share-dialog embed preview, all in one shot.
+          requestDomains: ["googlevideo.com"],
+          resourceTypes: ["media", "xmlhttprequest"],
+          tabIds: [tabId],
+        },
+      },
+    ];
+  }
+  return [];
 }
 
 async function syncTabRules(tabId, url) {
   const removeRuleIds = ruleIdsForTab(tabId);
-  const addRules = shouldBlockUrl(url) ? rulesForTab(tabId) : [];
+  const addRules = rulesForTab(tabId, url);
   try {
     await chrome.declarativeNetRequest.updateSessionRules({
       removeRuleIds,
@@ -70,8 +107,6 @@ async function syncTabRules(tabId, url) {
 }
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  // Re-sync on every URL change so navigating between Slides and Docs
-  // in the same tab toggles the rule correctly.
   if (changeInfo.url || changeInfo.status === "loading") {
     syncTabRules(tabId, tab && tab.url);
   }
@@ -84,7 +119,11 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 async function rescanAllTabs() {
   try {
     const tabs = await chrome.tabs.query({
-      url: ["https://docs.google.com/*"],
+      url: [
+        "https://docs.google.com/*",
+        "https://*.youtube.com/*",
+        "https://*.youtube-nocookie.com/*",
+      ],
     });
     await Promise.all(tabs.map((t) => syncTabRules(t.id, t.url)));
   } catch (e) {
