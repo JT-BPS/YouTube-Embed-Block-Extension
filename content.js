@@ -42,6 +42,16 @@
 
   if (!APP) return;
 
+  // Never touch the YouTube embed player itself. Teacher-embedded Education
+  // videos in Slides (and any legitimate embed) play through a
+  // youtube.com/embed/ iframe; interfering with that frame causes
+  // "Could not load YouTube Player". The share-dialog embed-preview abuse is
+  // already covered by the googlevideo.com network block on top-level
+  // YouTube tabs, so we lose no coverage by leaving /embed/ frames alone.
+  if (APP === "youtube" && location.pathname.startsWith("/embed/")) {
+    return;
+  }
+
   const YOUTUBE_PATTERN =
     /https?:\/\/([\w-]+\.)*(youtube\.com|youtube-nocookie\.com|youtu\.be|ytimg\.com|youtubeeducation\.com)\b/i;
 
