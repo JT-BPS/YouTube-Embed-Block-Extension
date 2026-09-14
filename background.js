@@ -1,5 +1,5 @@
 /**
- * YouTube Block — background service worker
+ * Slides YT Fix — background service worker
  *
  * Adds tab-scoped declarativeNetRequest session rules:
  *

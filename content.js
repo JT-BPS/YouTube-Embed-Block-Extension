@@ -1,5 +1,5 @@
 /**
- * YouTube Block — content script
+ * Slides YT Fix — content script
  *
  * Runs on Google Docs/Sheets/Slides and on YouTube itself. Operates silently —
  * no on-screen notices are shown to students.
