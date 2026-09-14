@@ -13,6 +13,12 @@
  *     Education embeds in Slides continue to play.
  *
  * youtubeeducation.com is allowed in Slides (no rule applies there).
+ *
+ * There are deliberately NO static (manifest) rules. A former static rule
+ * blocked youtube.googleapis.com from docs.google.com; the Slides/Drive
+ * video player loads through that host, which produced
+ * "Could not load YouTube player" for teacher-embedded videos. The Insert >
+ * Video Search / By URL entry points are hidden by content.js instead.
  */
 
 const DOCS_RULE_BASE = 100000;

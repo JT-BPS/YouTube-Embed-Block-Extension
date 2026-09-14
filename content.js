@@ -284,7 +284,7 @@
       });
 
     // Belt-and-suspenders: any /embed/ iframe that ends up in a dialog/popup
-    // gets removed. The static rule should already prevent it from loading.
+    // gets removed (share-dialog embed preview).
     scope.querySelectorAll("iframe").forEach((iframe) => {
       const src = iframe.src || iframe.getAttribute("src") || "";
       if (!/youtube(-nocookie)?\.com\/embed\//.test(src)) return;
