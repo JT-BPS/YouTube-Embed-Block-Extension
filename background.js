@@ -1,7 +1,24 @@
 /**
  * Slides YT Fix — background service worker
  *
- * Adds tab-scoped declarativeNetRequest session rules:
+ * Two layers of network blocking:
+ *
+ * 1. Static rules (rules.json, declared in the manifest):
+ *    Block youtube.googleapis.com (and any googleapis.com/youtube/ API path)
+ *    for XHR/fetch/script requests whose initiator is docs.google.com. The
+ *    Insert > Video dialog is a Google Picker iframe (docs.google.com/picker)
+ *    and its "Search" and "By URL" tabs fetch YouTube data through that host,
+ *    so blocking it makes YouTube search return nothing and URL lookups fail.
+ *
+ *    The Slides video player itself is an iframe at
+ *    youtube.googleapis.com/embed/..., and its internal requests are
+ *    initiated by that frame (not docs.google.com), so they are unaffected.
+ *    sub_frame and media are deliberately NOT in the blocked resource types,
+ *    and /embed/, /s/ and /iframe_api are explicitly allowed at a higher
+ *    priority. This is what 1.6.0 got wrong: it blocked sub_frame too, which
+ *    produced "Could not load YouTube player" for teacher embeds.
+ *
+ * 2. Tab-scoped session rules (this file):
  *
  *   - Docs / Sheets tabs: block YouTube embed sub-frames (smart chip preview).
  *     Slides tabs are deliberately untouched so teacher Education embeds work.
@@ -13,12 +30,6 @@
  *     Education embeds in Slides continue to play.
  *
  * youtubeeducation.com is allowed in Slides (no rule applies there).
- *
- * There are deliberately NO static (manifest) rules. A former static rule
- * blocked youtube.googleapis.com from docs.google.com; the Slides/Drive
- * video player loads through that host, which produced
- * "Could not load YouTube player" for teacher-embedded videos. The Insert >
- * Video Search / By URL entry points are hidden by content.js instead.
  */
 
 const DOCS_RULE_BASE = 100000;

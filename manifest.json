@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Slides YT Fix",
   "description": "Keeps teacher-embedded YouTube and Drive videos playing in Google Slides while blocking YouTube search, URL embedding, and link previews in Docs, Sheets, and Slides.",
-  "version": "1.7.0",
+  "version": "1.8.0",
 
   "update_url": "https://jt-bps.github.io/YouTube-Embed-Block-Extension/update.xml",
 
@@ -20,12 +20,23 @@
     "https://*.youtube-nocookie.com/*"
   ],
 
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "block_youtube_search",
+        "enabled": true,
+        "path": "rules.json"
+      }
+    ]
+  },
+
   "content_scripts": [
     {
       "matches": [
         "https://docs.google.com/presentation/*",
         "https://docs.google.com/document/*",
         "https://docs.google.com/spreadsheets/*",
+        "https://docs.google.com/picker*",
         "https://*.youtube.com/*",
         "https://*.youtube-nocookie.com/*"
       ],

@@ -1,0 +1,49 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||youtube.googleapis.com/",
+      "resourceTypes": ["xmlhttprequest", "script", "ping", "other", "websocket"],
+      "initiatorDomains": ["docs.google.com"]
+    }
+  },
+  {
+    "id": 2,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||googleapis.com/youtube/",
+      "resourceTypes": ["xmlhttprequest", "script", "ping", "other", "websocket"],
+      "initiatorDomains": ["docs.google.com"]
+    }
+  },
+  {
+    "id": 3,
+    "priority": 2,
+    "action": { "type": "allow" },
+    "condition": {
+      "urlFilter": "||youtube.googleapis.com/embed/",
+      "initiatorDomains": ["docs.google.com"]
+    }
+  },
+  {
+    "id": 4,
+    "priority": 2,
+    "action": { "type": "allow" },
+    "condition": {
+      "urlFilter": "||youtube.googleapis.com/s/",
+      "initiatorDomains": ["docs.google.com"]
+    }
+  },
+  {
+    "id": 5,
+    "priority": 2,
+    "action": { "type": "allow" },
+    "condition": {
+      "urlFilter": "||youtube.googleapis.com/iframe_api",
+      "initiatorDomains": ["docs.google.com"]
+    }
+  }
+]

@@ -5,9 +5,13 @@
  * no on-screen notices are shown to students.
  *
  * Behavior:
- *   - Slides: leaves Insert > Video menu visible. When the dialog opens, hides
- *     the "Search" and "By URL" tabs (YouTube entry points) and auto-switches
- *     to the Google Drive tab so users can still upload videos.
+ *   - Slides: leaves Insert > Video menu visible. The dialog that opens is a
+ *     Google Picker iframe served from docs.google.com/picker, so this script
+ *     also runs inside that frame (manifest matches "picker*", all_frames).
+ *     There it hides the "Search" / "By URL" / "YouTube" tabs and
+ *     auto-switches to the Google Drive tab so users can still insert Drive
+ *     videos. The YouTube data calls the picker makes are blocked at the
+ *     network level by rules.json as a second layer.
  *   - Docs / Sheets: removes any YouTube link-preview iframe (smart chip
  *     expand-to-play). The link itself stays as plain text.
  *   - Slides: leaves teacher-embedded YouTube iframes inside the slide canvas
@@ -28,6 +32,7 @@
       if (path.startsWith("/presentation")) return "slides";
       if (path.startsWith("/document")) return "docs";
       if (path.startsWith("/spreadsheets")) return "sheets";
+      if (path.startsWith("/picker")) return "picker";
     }
     if (
       HOST === "youtube.com" ||
@@ -125,6 +130,88 @@
           panel.innerHTML = "";
         }
       });
+    });
+  }
+
+  // ── Picker frame (Insert > Video dialog) ────────────────────────────────────
+  //
+  // The picker's tab strip has changed markup over time, so match broadly:
+  // anything with role="tab", plus the classic picker nav-pane items. Tabs are
+  // identified by their visible text / aria-label, never by class name.
+
+  const PICKER_TAB_BLOCKLIST =
+    /^\s*(search|search youtube|youtube|youtube search|by url|url|web|from the web)\s*$/i;
+  const PICKER_TAB_ALLOW = /drive|upload|my drive|shared|recent/i;
+  const PICKER_TAB_SELECTOR =
+    '[role="tab"], [class*="navpane-item"], [class*="picker-tab"], [class*="nav-item"], [class*="navitem"]';
+
+  function pickerLabel(el) {
+    return (el.getAttribute("aria-label") || el.textContent || "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function pickerTabIsSelected(el) {
+    if (el.getAttribute("aria-selected") === "true") return true;
+    const cls = el.className && typeof el.className === "string" ? el.className : "";
+    return /(^|[\s-])(selected|active)($|[\s-])/i.test(cls);
+  }
+
+  function neuterPickerFrame(scope) {
+    const root = scope && scope.querySelectorAll ? scope : document;
+    const tabs = root.querySelectorAll(PICKER_TAB_SELECTOR);
+    if (!tabs.length) return;
+
+    let hidActiveTab = false;
+    let driveTab = null;
+
+    tabs.forEach((tab) => {
+      const label = pickerLabel(tab);
+      if (!label) return;
+      if (PICKER_TAB_BLOCKLIST.test(label)) {
+        if (pickerTabIsSelected(tab)) hidActiveTab = true;
+        tab.style.setProperty("display", "none", "important");
+        tab.setAttribute("aria-hidden", "true");
+        tab.setAttribute("tabindex", "-1");
+      } else if (!driveTab && PICKER_TAB_ALLOW.test(label)) {
+        driveTab = tab;
+      }
+    });
+
+    if (hidActiveTab && driveTab) {
+      setTimeout(() => driveTab.click(), 0);
+    }
+
+    // Blank any tab panel that belongs to a blocked tab, in case the panel
+    // is already rendered (search box, URL field, result grid).
+    root.querySelectorAll('[role="tabpanel"]').forEach((panel) => {
+      if (panel.dataset.ysbReplaced) return;
+      const labelledById = panel.getAttribute("aria-labelledby");
+      const labelledByEl = labelledById
+        ? document.getElementById(labelledById)
+        : null;
+      const text = pickerLabel(panel) || (labelledByEl ? pickerLabel(labelledByEl) : "");
+      if (PICKER_TAB_BLOCKLIST.test(text)) {
+        panel.dataset.ysbReplaced = "1";
+        panel.innerHTML = "";
+      }
+    });
+  }
+
+  // Inside the picker frame, remove any YouTube iframe (preview player) and
+  // any search result that links to YouTube. Drive results never link there.
+  function scrubPickerYouTubeContent(scope) {
+    if (!scope.querySelectorAll) return;
+    scope.querySelectorAll("iframe").forEach((iframe) => {
+      const src = iframe.src || iframe.getAttribute("src") || "";
+      if (isYouTubeUrl(src)) iframe.remove();
+    });
+    scope.querySelectorAll("a[href]").forEach((a) => {
+      if (!isYouTubeUrl(a.href)) return;
+      const item =
+        a.closest('[role="option"], [role="gridcell"], [role="listitem"], [class*="result"], [class*="item"]') ||
+        a;
+      item.remove();
     });
   }
 
@@ -302,6 +389,9 @@
     if (APP === "slides") {
       neuterSlidesVideoDialog(node);
       scanDocsIframes(node);
+    } else if (APP === "picker") {
+      neuterPickerFrame(node);
+      scrubPickerYouTubeContent(node);
     } else if (APP === "docs" || APP === "sheets") {
       scanDocsIframes(node);
       scanLinkPreviewCards(node);
@@ -341,6 +431,12 @@
           if (APP === "slides") {
             const dialog = t.closest('[role="dialog"]');
             if (dialog) neuterSlidesVideoDialog(dialog);
+          } else if (APP === "picker") {
+            neuterPickerFrame(document);
+          }
+        } else if (mutation.attributeName === "class") {
+          if (APP === "picker") {
+            neuterPickerFrame(document);
           }
         } else if (mutation.attributeName === "aria-label") {
           if (APP === "youtube") {
@@ -364,6 +460,7 @@
       "aria-selected",
       "aria-hidden",
       "aria-label",
+      "class",
     ],
   });
 })();
