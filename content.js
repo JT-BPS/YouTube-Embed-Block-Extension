@@ -5,13 +5,19 @@
  * no on-screen notices are shown to students.
  *
  * Behavior:
- *   - Slides: leaves Insert > Video menu visible. The dialog that opens is a
- *     Google Picker iframe served from docs.google.com/picker, so this script
- *     also runs inside that frame (manifest matches "picker*", all_frames).
- *     There it hides the "Search" / "By URL" / "YouTube" tabs and
- *     auto-switches to the Google Drive tab so users can still insert Drive
- *     videos. The YouTube data calls the picker makes are blocked at the
- *     network level by rules.json as a second layer.
+ *   - Slides: leaves Insert > Video menu visible but neuters the dialog it
+ *     opens. Google has shipped three generations of that dialog and all are
+ *     handled:
+ *       (a) the current one: a main-frame dialog with aria-label
+ *           "Insert video", a side list of role="option" entries
+ *           (YouTube / Google Drive) and a YouTube search box;
+ *       (b) an interim one: heading "Insert Video" with button[role="tab"]
+ *           entries "YouTube" / "Drive";
+ *       (c) the classic Google Picker iframe at docs.google.com/picker with
+ *           div[role="tab"] entries "Search" / "By URL" / "Google Drive".
+ *     In every case the YouTube entries and inputs are removed, the Drive
+ *     entry is auto-selected, and any YouTube result tiles are stripped, so
+ *     students can still insert Drive videos but not YouTube ones.
  *   - Docs / Sheets: removes any YouTube link-preview iframe (smart chip
  *     expand-to-play). The link itself stays as plain text.
  *   - Slides: leaves teacher-embedded YouTube iframes inside the slide canvas
@@ -67,70 +73,121 @@
 
   // ── Slides: neuter Insert Video dialog ──────────────────────────────────────
 
-  const TAB_BLOCKLIST = /^\s*(search|by url)\s*$/i;
-  const TAB_DRIVE = /google drive/i;
+  const VIDEO_DIALOG_PATTERN = /insert\s*video/i;
+  // Entries in the dialog's side list / tab strip that lead to YouTube.
+  const YT_NAV_PATTERN =
+    /^\s*(search|search youtube|youtube( search| videos?)?|by url|url|from (the )?web|web)\s*$/i;
+  const DRIVE_NAV_PATTERN = /drive|upload|my drive|shared with me|recent/i;
+  const NAV_SELECTOR =
+    '[role="tab"], [role="option"], [role="menuitem"], [role="menuitemradio"], [role="listitem"], [role="treeitem"], [role="radio"]';
+  const YT_INPUT_PATTERN = /youtube|by url|video url|paste a (youtube )?(url|link)/i;
+  const YT_RESULT_SELECTOR =
+    'img[src*="ytimg.com"], a[href*="youtube.com"], a[href*="youtu.be"], iframe[src*="youtube.com"], iframe[src*="youtube-nocookie.com"], iframe[src*="youtubeeducation.com"]';
+
+  function cleanLabel(el) {
+    return (el.getAttribute("aria-label") || el.textContent || "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function isSelectedNav(el) {
+    if (el.getAttribute("aria-selected") === "true") return true;
+    if (el.getAttribute("aria-current")) return true;
+    if (el.getAttribute("aria-checked") === "true") return true;
+    const cls = typeof el.className === "string" ? el.className : "";
+    return /(^|[\s-])(selected|active|checked)($|[\s-])/i.test(cls);
+  }
+
+  function hideEl(el) {
+    el.style.setProperty("display", "none", "important");
+    el.setAttribute("aria-hidden", "true");
+    el.setAttribute("tabindex", "-1");
+  }
+
+  function isVideoDialog(dialog) {
+    if (VIDEO_DIALOG_PATTERN.test(dialog.getAttribute("aria-label") || "")) {
+      return true;
+    }
+    const heading = dialog.querySelector('[role="heading"], h1, h2, h3');
+    return !!heading && VIDEO_DIALOG_PATTERN.test(heading.textContent || "");
+  }
+
+  function findVideoDialogs(scope) {
+    const found = new Set();
+    if (scope.matches && scope.matches('[role="dialog"]')) found.add(scope);
+    if (scope.closest) {
+      const outer = scope.closest('[role="dialog"]');
+      if (outer) found.add(outer);
+    }
+    if (scope.querySelectorAll) {
+      scope.querySelectorAll('[role="dialog"]').forEach((d) => found.add(d));
+    }
+    return Array.from(found).filter(isVideoDialog);
+  }
+
+  function neuterVideoDialog(dialog) {
+    let youTubeActive = false;
+    let driveNav = null;
+
+    // Side list / tab strip entries.
+    dialog.querySelectorAll(NAV_SELECTOR).forEach((el) => {
+      const label = cleanLabel(el);
+      if (!label) return;
+      if (YT_NAV_PATTERN.test(label)) {
+        if (isSelectedNav(el)) youTubeActive = true;
+        hideEl(el);
+      } else if (!driveNav && DRIVE_NAV_PATTERN.test(label)) {
+        driveNav = el;
+      }
+    });
+
+    // YouTube search / URL inputs. If one is present the YouTube pane is
+    // showing, so also switch to Drive.
+    dialog.querySelectorAll("input, textarea").forEach((input) => {
+      const text = [
+        input.getAttribute("aria-label"),
+        input.getAttribute("placeholder"),
+        input.getAttribute("title"),
+        input.value,
+      ].join(" ");
+      if (!YT_INPUT_PATTERN.test(text)) return;
+      youTubeActive = true;
+      const box =
+        input.closest('[role="search"], [role="combobox"], form') || input;
+      box.remove();
+    });
+
+    // Any YouTube result tiles or preview players that already rendered.
+    dialog.querySelectorAll(YT_RESULT_SELECTOR).forEach((hit) => {
+      const tile =
+        hit.closest(
+          '[role="option"], [role="gridcell"], [role="listitem"], [role="row"], li'
+        ) || hit;
+      tile.remove();
+    });
+
+    // Classic picker tab panels labelled by a hidden tab.
+    dialog.querySelectorAll('[role="tabpanel"]').forEach((panel) => {
+      if (panel.dataset.ysbReplaced) return;
+      const labelledById = panel.getAttribute("aria-labelledby");
+      const labelledByEl = labelledById
+        ? document.getElementById(labelledById)
+        : null;
+      const text =
+        cleanLabel(panel) || (labelledByEl ? cleanLabel(labelledByEl) : "");
+      if (YT_NAV_PATTERN.test(text)) {
+        panel.dataset.ysbReplaced = "1";
+        panel.innerHTML = "";
+      }
+    });
+
+    if (youTubeActive && driveNav && !isSelectedNav(driveNav)) {
+      setTimeout(() => driveNav.click(), 0);
+    }
+  }
 
   function neuterSlidesVideoDialog(scope) {
-    const dialogs =
-      scope.matches && scope.matches('[role="dialog"]')
-        ? [scope]
-        : scope.querySelectorAll
-        ? scope.querySelectorAll('[role="dialog"]')
-        : [];
-    dialogs.forEach((dialog) => {
-      const heading =
-        dialog.getAttribute("aria-label") ||
-        dialog.querySelector('[role="heading"]')?.textContent ||
-        dialog.querySelector("h1, h2, h3")?.textContent ||
-        "";
-      if (!/insert video|video/i.test(heading)) return;
-
-      const tabs = dialog.querySelectorAll('[role="tab"]');
-      if (!tabs.length) return;
-
-      let hidActiveTab = false;
-      let driveTab = null;
-
-      tabs.forEach((tab) => {
-        const label = (
-          tab.getAttribute("aria-label") ||
-          tab.textContent ||
-          ""
-        ).trim();
-        if (TAB_BLOCKLIST.test(label)) {
-          tab.style.setProperty("display", "none", "important");
-          tab.setAttribute("aria-hidden", "true");
-          tab.setAttribute("tabindex", "-1");
-          if (tab.getAttribute("aria-selected") === "true") {
-            hidActiveTab = true;
-          }
-        } else if (TAB_DRIVE.test(label)) {
-          driveTab = tab;
-        }
-      });
-
-      if (hidActiveTab && driveTab) {
-        setTimeout(() => driveTab.click(), 0);
-      }
-
-      const panels = dialog.querySelectorAll('[role="tabpanel"]');
-      panels.forEach((panel) => {
-        if (panel.dataset.ysbReplaced) return;
-        const panelLabel = (panel.getAttribute("aria-label") || "").trim();
-        const labelledById = panel.getAttribute("aria-labelledby");
-        const labelledByEl = labelledById
-          ? dialog.querySelector("#" + CSS.escape(labelledById))
-          : null;
-        const labelledByText = (labelledByEl?.textContent || "").trim();
-        if (
-          TAB_BLOCKLIST.test(panelLabel) ||
-          TAB_BLOCKLIST.test(labelledByText)
-        ) {
-          panel.dataset.ysbReplaced = "1";
-          panel.innerHTML = "";
-        }
-      });
-    });
+    findVideoDialogs(scope).forEach(neuterVideoDialog);
   }
 
   // ── Picker frame (Insert > Video dialog) ────────────────────────────────────
@@ -145,17 +202,8 @@
   const PICKER_TAB_SELECTOR =
     '[role="tab"], [class*="navpane-item"], [class*="picker-tab"], [class*="nav-item"], [class*="navitem"]';
 
-  function pickerLabel(el) {
-    return (el.getAttribute("aria-label") || el.textContent || "")
-      .replace(/\s+/g, " ")
-      .trim();
-  }
-
-  function pickerTabIsSelected(el) {
-    if (el.getAttribute("aria-selected") === "true") return true;
-    const cls = el.className && typeof el.className === "string" ? el.className : "";
-    return /(^|[\s-])(selected|active)($|[\s-])/i.test(cls);
-  }
+  const pickerLabel = cleanLabel;
+  const pickerTabIsSelected = isSelectedNav;
 
   function neuterPickerFrame(scope) {
     const root = scope && scope.querySelectorAll ? scope : document;
@@ -384,14 +432,34 @@
 
   // ── Mutation processing ─────────────────────────────────────────────────────
 
+  // The Insert video dialog populates its label, side list and panes over
+  // several frames after it is attached, so a single pass on the added node
+  // is not enough. Coalesce mutations into one cheap whole-document rescan.
+  let rescanTimer = null;
+  function scheduleDialogRescan() {
+    if (rescanTimer) return;
+    rescanTimer = setTimeout(() => {
+      rescanTimer = null;
+      if (!document.querySelector('[role="dialog"], #doclist')) return;
+      neuterSlidesVideoDialog(document.documentElement);
+      if (APP === "picker") {
+        neuterPickerFrame(document);
+        scrubPickerYouTubeContent(document.documentElement);
+      }
+    }, 60);
+  }
+
   function processNode(node) {
     if (!node || node.nodeType !== Node.ELEMENT_NODE) return;
     if (APP === "slides") {
       neuterSlidesVideoDialog(node);
       scanDocsIframes(node);
+      scheduleDialogRescan();
     } else if (APP === "picker") {
       neuterPickerFrame(node);
       scrubPickerYouTubeContent(node);
+      neuterSlidesVideoDialog(document.documentElement);
+      scheduleDialogRescan();
     } else if (APP === "docs" || APP === "sheets") {
       scanDocsIframes(node);
       scanLinkPreviewCards(node);
@@ -428,18 +496,17 @@
           mutation.attributeName === "aria-selected" ||
           mutation.attributeName === "aria-hidden"
         ) {
-          if (APP === "slides") {
-            const dialog = t.closest('[role="dialog"]');
-            if (dialog) neuterSlidesVideoDialog(dialog);
-          } else if (APP === "picker") {
-            neuterPickerFrame(document);
+          if (APP === "slides" || APP === "picker") {
+            scheduleDialogRescan();
           }
         } else if (mutation.attributeName === "class") {
-          if (APP === "picker") {
-            neuterPickerFrame(document);
+          if (APP === "slides" || APP === "picker") {
+            scheduleDialogRescan();
           }
         } else if (mutation.attributeName === "aria-label") {
-          if (APP === "youtube") {
+          if (APP === "slides" || APP === "picker") {
+            scheduleDialogRescan();
+          } else if (APP === "youtube") {
             const label = (t.getAttribute("aria-label") || "").trim();
             if (SHARE_LABEL_PATTERN.test(label)) {
               t.style.setProperty("display", "none", "important");
@@ -458,6 +525,8 @@
       "src",
       "href",
       "aria-selected",
+      "aria-current",
+      "aria-checked",
       "aria-hidden",
       "aria-label",
       "class",
